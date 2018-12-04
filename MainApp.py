@@ -1,50 +1,126 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+Created on Sat Nov 24 20:07:58 2018
 
-# Form implementation generated from reading ui file 'gui.ui'
-#
-# Created by: PyQt5 UI code generator 5.6
-#
-# WARNING! All changes made in this file will be lost!
+@author: nishant
+"""
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PIL import Image
+import face_recognition
+import cv2
+import os
+import pymongo
+import pprint
+import numpy as np
+import time
 
-class Ui_Dialog(object):
-    def setupUi(self, Dialog):
-        Dialog.setObjectName("Dialog")
-        Dialog.resize(712, 560)
-        self.buttonBox = QtWidgets.QDialogButtonBox(Dialog)
-        self.buttonBox.setGeometry(QtCore.QRect(590, 30, 81, 241))
-        self.buttonBox.setOrientation(QtCore.Qt.Vertical)
-        self.buttonBox.setStandardButtons(QtWidgets.QDialogButtonBox.Cancel|QtWidgets.QDialogButtonBox.Ok)
-        self.buttonBox.setObjectName("buttonBox")
-        self.graphicsView = QtWidgets.QGraphicsView(Dialog)
-        self.graphicsView.setGeometry(QtCore.QRect(20, 20, 531, 521))
-        self.graphicsView.setObjectName("graphicsView")
-        self.browseImage = QtWidgets.QPushButton(Dialog)
-        self.browseImage.setGeometry(QtCore.QRect(580, 480, 111, 23))
-        self.browseImage.setObjectName("browseImage")
-        self.trainData = QtWidgets.QPushButton(Dialog)
-        self.trainData.setGeometry(QtCore.QRect(580, 300, 101, 23))
-        self.trainData.setObjectName("trainData")
-        self.pushButton = QtWidgets.QPushButton(Dialog)
-        self.pushButton.setGeometry(QtCore.QRect(570, 360, 121, 31))
-        self.pushButton.setDefault(False)
-        self.pushButton.setFlat(False)
-        self.pushButton.setObjectName("pushButton")
-        self.pushButton_2 = QtWidgets.QPushButton(Dialog)
-        self.pushButton_2.setGeometry(QtCore.QRect(580, 220, 91, 21))
-        self.pushButton_2.setObjectName("pushButton_2")
+from pymongo import MongoClient
+db_client = MongoClient()
+folder = '/home/nishant/IP_Project/Images/'
+db = db_client.new_db
+faces = db.faces
 
-        self.retranslateUi(Dialog)
-        self.buttonBox.accepted.connect(Dialog.accept)
-        self.buttonBox.rejected.connect(Dialog.reject)
-        QtCore.QMetaObject.connectSlotsByName(Dialog)
+path = '/home/nishant/a3.jpg'
+u_path = '/home/nishant/a4.jpg'
+image = face_recognition.load_image_file(u_path)
 
-    def retranslateUi(self, Dialog):
-        _translate = QtCore.QCoreApplication.translate
-        Dialog.setWindowTitle(_translate("Dialog", "Dialog"))
-        self.browseImage.setText(_translate("Dialog", "Browse Image"))
-        self.trainData.setText(_translate("Dialog", "Train Data"))
-        self.pushButton.setText(_translate("Dialog", "Recognise Students"))
-        self.pushButton_2.setText(_translate("Dialog", "Locate Faces"))
 
+face_locations = findFaces(path,folder);
+
+photo_encodings = encodeClassFaces(image);
+
+known_faces = getEncodedList()
+
+studentList = recogniseStudents(photo_encodings, known_faces)
+
+
+
+def populateDB():
+    pid = []
+    for filename in os.listdir(folder):
+        encoding = {}
+        path = folder +filename
+        img = face_recognition.load_image_file(path)
+        print(filename)
+        if img is not None:
+            en = face_recognition.face_encodings(img)
+            if not en:
+                os.remove(path)
+                continue
+            encoding = {'filename' : filename[0:len(filename) - 4], 'encoding': en[0].tolist() }
+            pid.append(faces.insert_one(encoding).inserted_id)      
+    return pid
+
+
+def getEncodedList():
+    cursor = faces.find()
+    x =[]
+    for im in cursor:
+         x.append(im) 
+    
+    return x
+
+
+
+def findFaces(path,folder):
+    image = face_recognition.load_image_file(path)
+    face_locations = face_recognition.face_locations(image, number_of_times_to_upsample=1, model="cnn")
+    i = 0
+    for face in face_locations:
+        top, right, bottom, left = face
+        face_image = image[top:bottom, left:right]
+        pil_image = Image.fromarray(face_image)
+
+#        pil_image.show()
+#        image = face_recognition.load_image_file(pil_image)
+        timestr = time.strftime("%Y%m%d-%H%M%S")
+        
+        pil_image.save(folder + 'image' + timestr + str(i) +'.jpg')
+        i=i+1
+    
+    
+    return face_locations
+
+def encodeClassFaces(image):
+    
+    photo_encodings = []
+    face_locations = face_recognition.face_locations(image, number_of_times_to_upsample=1, model="cnn")
+    
+    for face in face_locations:
+        top, right, bottom, left = face
+        face_image = image[top:bottom, left:right]
+        pil_image = Image.fromarray(face_image)
+
+#        pil_image.show()
+#        image = face_recognition.load_image_file(pil_image)
+        en = face_recognition.face_encodings(np.array(pil_image))
+        
+        if not en:
+            continue
+        photo_encodings.append(en)
+    
+    return photo_encodings
+
+def recogniseStudents(photo_encodings,known_faces ):
+    
+    result = []
+    
+    for u_face in photo_encodings:
+        res = False
+        for known_face in known_faces:
+            k_face = known_face['encoding']
+            #print( known_face['filename'])
+            res = face_recognition.compare_faces(u_face,np.asarray(k_face))
+           # print(res[0])
+            
+            if res[0] == True:
+                result.append({'encoding' : u_face, 'filename': known_face['filename'] })
+                break
+            else :
+                continue
+        
+        if res[0] == False:
+            result.append({'encoding': u_face, 'filename': 'not found'})
+    
+    return result
